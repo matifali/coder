@@ -928,10 +928,10 @@ func New(options *Options) *API {
 		HostnameRegex: api.AppHostnameRegex,
 		RealIPConfig:  options.RealIPConfig,
 
-		SignedTokenProvider: api.WorkspaceAppsProvider,
-		AgentProvider:       api.agentProvider,
-		StatsCollector:      workspaceapps.NewStatsCollector(options.WorkspaceAppsStatsCollectorOptions),
-		WSWatcher:           api.wsWatcher,
+		WorkspaceAppsProvider: api.WorkspaceAppsProvider,
+		AgentProvider:         api.agentProvider,
+		StatsCollector:        workspaceapps.NewStatsCollector(options.WorkspaceAppsStatsCollectorOptions),
+		WSWatcher:             api.wsWatcher,
 
 		DisablePathApps:          options.DeploymentValues.DisablePathApps.Value(),
 		CookiesConfig:            options.DeploymentValues.HTTPCookies,
@@ -2241,7 +2241,7 @@ type API struct {
 
 	metricsCache          *metricscache.Cache
 	updateChecker         *updatecheck.Checker
-	WorkspaceAppsProvider workspaceapps.SignedTokenProvider
+	WorkspaceAppsProvider workspaceapps.WorkspaceAppsProvider
 	workspaceAppServer    *workspaceapps.Server
 	agentProvider         workspaceapps.AgentProvider
 
