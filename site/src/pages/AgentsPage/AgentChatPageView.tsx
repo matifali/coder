@@ -17,6 +17,13 @@ import type {
 	ChatDiffStatus,
 	ChatMessagePart,
 } from "#/api/typesGenerated";
+import { useProxy } from "#/contexts/ProxyContext";
+import { WorkspaceAppFrame } from "#/modules/apps/WorkspaceAppFrame";
+import {
+	findWorkspaceAgent,
+	findWorkspaceAppWithAgent,
+	isWorkspaceAppEmbeddable,
+} from "#/modules/apps/workspaceApps";
 import { cn } from "#/utils/cn";
 import { pageTitle } from "#/utils/page";
 import {
@@ -39,10 +46,12 @@ import { SidebarTabView } from "./components/ChatsSidebar/tabs/SidebarTabView";
 import { ChatTopBar } from "./components/ChatTopBar";
 import { GitPanel } from "./components/GitPanel/GitPanel";
 import { DebugPanel } from "./components/RightPanel/DebugPanel/DebugPanel";
+import { PortPreviewPanel } from "./components/RightPanel/PortPreviewPanel";
 import { RightPanel } from "./components/RightPanel/RightPanel";
 import { RightPanelAddTabMenu } from "./components/RightPanel/RightPanelAddTabMenu";
 import { getWorkspaceStatus, StatusIcon } from "./components/StatusIcon";
 import { TerminalPanel } from "./components/TerminalPanel";
+import type { PortSelection } from "./components/WorkspacePillPorts";
 import { ChatWorkspaceContext } from "./context/ChatWorkspaceContext";
 import { chatWidthClass, useChatFullWidth } from "./hooks/useChatFullWidth";
 import {
@@ -280,6 +289,8 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 	lastInjectedContext,
 }) => {
 	const queryClient = useQueryClient();
+	const { proxy } = useProxy();
+	const wildcardHostname = proxy.preferredWildcardHostname;
 
 	const canOpenChatSharing = canShareChat && organizationId !== undefined;
 
@@ -334,6 +345,7 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 		const validatedTabs = validateUserRightPanelTabs(userRightPanelTabs, {
 			workspace,
 			workspaceAgent,
+			wildcardHostname,
 		});
 		if (areUserRightPanelTabsEqual(userRightPanelTabs, validatedTabs)) {
 			return;
@@ -343,7 +355,14 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 		if (!isArchived) {
 			savePersistedRightPanelTabs(agentId, validatedTabs);
 		}
-	}, [agentId, isArchived, userRightPanelTabs, workspace, workspaceAgent]);
+	}, [
+		agentId,
+		isArchived,
+		userRightPanelTabs,
+		wildcardHostname,
+		workspace,
+		workspaceAgent,
+	]);
 
 	const setSidebarTabId = (tabId: string) => {
 		setSidebarTabIdState(tabId);
@@ -422,6 +441,7 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 		{
 			workspace,
 			workspaceAgent,
+			wildcardHostname,
 		},
 	);
 
@@ -455,6 +475,12 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 		sidebarTabId,
 		availableDesktopChatId,
 	);
+
+	const activateRightPanelTab = (tabId: string) => {
+		onSetShowSidebarPanel(true);
+		setPendingTabId(null);
+		setSidebarTabId(tabId);
+	};
 
 	// A new terminal tab connects off screen as the pending tab. When it signals
 	// readiness, promote it to the active tab. Bail if it is no longer the pending
@@ -503,22 +529,140 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 		startPendingTab(tab.id);
 	};
 
+	const handleOpenWorkspaceAppTab = (app: TypesGen.WorkspaceApp) => {
+		if (!workspaceAgent) {
+			return;
+		}
+		const existingTab = renderedUserRightPanelTabs.find(
+			(tab) =>
+				tab.kind === "workspace_app" &&
+				tab.agentId === workspaceAgent.id &&
+				tab.appId === app.id,
+		);
+		if (existingTab) {
+			activateRightPanelTab(existingTab.id);
+			return;
+		}
+		const tab: UserRightPanelTab = {
+			id: createUserRightPanelTabId("workspace_app"),
+			kind: "workspace_app",
+			label: app.display_name ?? app.slug,
+			agentId: workspaceAgent.id,
+			appId: app.id,
+		};
+		setUserRightPanelTabs([...renderedUserRightPanelTabs, tab]);
+		activateRightPanelTab(tab.id);
+	};
+
+	const handleOpenCommandAppTab = (app: TypesGen.WorkspaceApp) => {
+		if (!workspace || !workspaceAgent || !app.command) {
+			return;
+		}
+		const existingTab = renderedUserRightPanelTabs.find(
+			(tab) => tab.kind === "terminal" && tab.sourceAppId === app.id,
+		);
+		if (existingTab) {
+			activateRightPanelTab(existingTab.id);
+			return;
+		}
+		const tab: UserRightPanelTab = {
+			id: createUserRightPanelTabId("terminal"),
+			kind: "terminal",
+			label: app.display_name ?? app.slug,
+			reconnectionToken: createTerminalReconnectionToken(),
+			initialCommand: app.command,
+			sourceAppId: app.id,
+		};
+		setUserRightPanelTabs([...renderedUserRightPanelTabs, tab]);
+		startPendingTab(tab.id);
+	};
+
+	const handleOpenPortTab = (selection: PortSelection) => {
+		if (!workspaceAgent) {
+			return;
+		}
+		const existingTab = renderedUserRightPanelTabs.find(
+			(tab) =>
+				tab.kind === "port" &&
+				tab.agentId === workspaceAgent.id &&
+				tab.port === selection.port &&
+				tab.protocol === selection.protocol,
+		);
+		if (existingTab) {
+			activateRightPanelTab(existingTab.id);
+			return;
+		}
+		const tab: UserRightPanelTab = {
+			id: createUserRightPanelTabId("port"),
+			kind: "port",
+			label: selection.label,
+			agentId: workspaceAgent.id,
+			port: selection.port,
+			protocol: selection.protocol,
+			source: selection.source,
+		};
+		setUserRightPanelTabs([...renderedUserRightPanelTabs, tab]);
+		activateRightPanelTab(tab.id);
+	};
+
+	const renderUnavailableTab = (message: string): ReactNode => (
+		<div className="flex h-full min-h-0 items-center justify-center px-6 text-center text-xs text-content-secondary">
+			{message}
+		</div>
+	);
+
 	const renderUserTabContent = (tab: UserRightPanelTab): ReactNode => {
-		return workspace && workspaceAgent ? (
-			<TerminalPanel
-				chatId={agentId}
-				reconnectionToken={tab.reconnectionToken}
-				initialCommand={tab.initialCommand}
-				isVisible={
-					shouldShowSidebar &&
-					(effectiveSidebarTabId === tab.id || pendingTabId === tab.id)
+		switch (tab.kind) {
+			case "terminal":
+				return workspace && workspaceAgent ? (
+					<TerminalPanel
+						chatId={agentId}
+						reconnectionToken={tab.reconnectionToken}
+						initialCommand={tab.initialCommand}
+						isVisible={
+							shouldShowSidebar &&
+							(effectiveSidebarTabId === tab.id || pendingTabId === tab.id)
+						}
+						autoFocus={shouldShowSidebar && effectiveSidebarTabId === tab.id}
+						onReady={() => handleTerminalTabReady(tab.id)}
+						workspace={workspace}
+						workspaceAgent={workspaceAgent}
+					/>
+				) : null;
+			case "workspace_app": {
+				if (!workspace) {
+					return null;
 				}
-				autoFocus={shouldShowSidebar && effectiveSidebarTabId === tab.id}
-				onReady={() => handleTerminalTabReady(tab.id)}
-				workspace={workspace}
-				workspaceAgent={workspaceAgent}
-			/>
-		) : null;
+				const app = findWorkspaceAppWithAgent(
+					workspace,
+					tab.agentId,
+					tab.appId,
+				);
+				if (!app || !isWorkspaceAppEmbeddable(app)) {
+					return renderUnavailableTab(
+						"This workspace app is no longer available as a right-panel tab.",
+					);
+				}
+				return <WorkspaceAppFrame workspace={workspace} app={app} />;
+			}
+			case "port": {
+				if (!workspace) {
+					return null;
+				}
+				const agent = findWorkspaceAgent(workspace, tab.agentId);
+				if (!agent) {
+					return null;
+				}
+				return (
+					<PortPreviewPanel
+						workspace={workspace}
+						agent={agent}
+						host={wildcardHostname}
+						tab={tab}
+					/>
+				);
+			}
+		}
 	};
 
 	const renderTabContent = (tabId: string): ReactNode => {
@@ -820,7 +964,11 @@ export const AgentChatPageView: FC<AgentChatPageViewProps> = ({
 								<RightPanelAddTabMenu
 									workspace={workspace}
 									agent={workspaceAgent}
+									isRunning={workspace?.latest_build.status === "running"}
 									onNewTerminal={handleAddTerminalTab}
+									onOpenWorkspaceApp={handleOpenWorkspaceAppTab}
+									onOpenCommandApp={handleOpenCommandAppTab}
+									onOpenPort={handleOpenPortTab}
 								/>
 							}
 							onClose={() => onSetShowSidebarPanel(false)}

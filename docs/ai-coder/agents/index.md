@@ -137,6 +137,14 @@ or other visual context that helps the agent understand the task. Messages can
 contain images alone or combined with text. Image attachments require a model
 that supports vision input.
 
+### Right panel workspace tools
+
+When a chat has an attached workspace, the right panel includes workspace tools such as Git and Web Terminal. Use the `+` control in the tab strip to add more right-panel tabs for the same chat.
+
+You can add multiple Web Terminal tabs, embed eligible workspace apps, and preview forwarded ports. Extra right-panel tabs are saved in browser storage per chat, so reloading the same chat restores them without affecting other chats.
+
+Only workspace surfaces that Coder already expects to frame are embedded. Subdomain workspace apps and port-forward URLs require a configured wildcard access URL. External apps, command apps, custom protocol apps, and path-based apps use the normal app launch behavior instead of opening inside the right panel.
+
 ## Security benefits of the control plane architecture
 
 Running the agent loop in the control plane rather than inside the developer

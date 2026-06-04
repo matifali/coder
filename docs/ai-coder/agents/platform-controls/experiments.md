@@ -84,10 +84,10 @@ Off by default. Three layers control whether it runs for a given chat:
 > access to all users' debug data.
 
 When debug logging is active for a chat, a **Debug** tab appears in the
-right panel of the Agents page (alongside Git, Terminal, and Desktop) for
-that chat's owner. The tab lists recent debug runs and lets you expand a run
-into its per-step request, response, token usage, retry attempts, errors,
-and policy metadata.
+right panel of the Agents page (alongside Git, Terminal, Desktop, and any
+user-created workspace tabs) for that chat's owner. The tab lists recent
+debug runs and lets you expand a run into its per-step request, response,
+token usage, retry attempts, errors, and policy metadata.
 
 ### Export debug logs
 

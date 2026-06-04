@@ -1,35 +1,62 @@
-import type { Workspace, WorkspaceAgent } from "#/api/typesGenerated";
+import type {
+	Workspace,
+	WorkspaceAgent,
+	WorkspaceAgentPortShareProtocol,
+} from "#/api/typesGenerated";
+import {
+	findWorkspaceAgent,
+	findWorkspaceAppWithAgent,
+} from "#/modules/apps/workspaceApps";
+import type { PortTabSource } from "../components/WorkspacePillPorts";
 
-export type UserRightPanelTab = {
-	id: string;
-	kind: "terminal";
-	label: string;
-	/**
-	 * UUID used as the PTY reconnect token. The backend rejects
-	 * reconnect tokens that are not valid UUIDs, so each terminal tab
-	 * stores its own generated UUID. Persisting it keeps the PTY
-	 * session attached across reloads.
-	 */
-	reconnectionToken: string;
-	/**
-	 * Command run when the PTY session is first created. Used by command
-	 * apps (e.g. Claude Code) that open as a renamed terminal tab instead
-	 * of a new browser window. The backend only runs the command for a
-	 * fresh reconnect token, so reattaching after a reload does not
-	 * re-run it.
-	 */
-	initialCommand?: string;
-	/**
-	 * Set when the terminal was opened from a command app. Used to
-	 * deduplicate so reopening the same command app activates the
-	 * existing terminal tab instead of starting another session.
-	 */
-	sourceAppId?: string;
-};
+export type UserRightPanelTab =
+	| {
+			id: string;
+			kind: "terminal";
+			label: string;
+			/**
+			 * UUID used as the PTY reconnect token. The backend rejects
+			 * reconnect tokens that are not valid UUIDs, so each terminal tab
+			 * stores its own generated UUID. Persisting it keeps the PTY
+			 * session attached across reloads.
+			 */
+			reconnectionToken: string;
+			/**
+			 * Command run when the PTY session is first created. Used by command
+			 * apps (e.g. Claude Code) that open as a renamed terminal tab instead
+			 * of a new browser window. The backend only runs the command for a
+			 * fresh reconnect token, so reattaching after a reload does not
+			 * re-run it.
+			 */
+			initialCommand?: string;
+			/**
+			 * Set when the terminal was opened from a command app. Used to
+			 * deduplicate so reopening the same command app activates the
+			 * existing terminal tab instead of starting another session.
+			 */
+			sourceAppId?: string;
+	  }
+	| {
+			id: string;
+			kind: "workspace_app";
+			label: string;
+			appId: string;
+			agentId: string;
+	  }
+	| {
+			id: string;
+			kind: "port";
+			label: string;
+			agentId: string;
+			port: number;
+			protocol: WorkspaceAgentPortShareProtocol;
+			source: PortTabSource;
+	  };
 
 type ValidateUserRightPanelTabsOptions = {
 	workspace: Workspace | undefined;
 	workspaceAgent: WorkspaceAgent | undefined;
+	wildcardHostname: string;
 };
 
 export function isUserRightPanelTab(
@@ -54,17 +81,55 @@ export function isUserRightPanelTab(
 		);
 	}
 
+	if (record.kind === "workspace_app") {
+		return (
+			typeof record.appId === "string" && typeof record.agentId === "string"
+		);
+	}
+
+	if (record.kind === "port") {
+		return (
+			typeof record.agentId === "string" &&
+			typeof record.port === "number" &&
+			Number.isInteger(record.port) &&
+			record.port > 0 &&
+			(record.protocol === "http" || record.protocol === "https") &&
+			(record.source === "listening" || record.source === "shared")
+		);
+	}
+
 	return false;
 }
 
 export function validateUserRightPanelTabs(
 	tabs: readonly UserRightPanelTab[],
-	{ workspace, workspaceAgent }: ValidateUserRightPanelTabsOptions,
+	{
+		workspace,
+		workspaceAgent,
+		wildcardHostname,
+	}: ValidateUserRightPanelTabsOptions,
 ): UserRightPanelTab[] {
-	if (workspace === undefined || workspaceAgent === undefined) {
-		return [];
-	}
-	return [...tabs];
+	return tabs.filter((tab) => {
+		if (tab.kind === "terminal") {
+			return workspace !== undefined && workspaceAgent !== undefined;
+		}
+
+		if (!workspace) {
+			return false;
+		}
+
+		if (tab.kind === "workspace_app") {
+			return (
+				findWorkspaceAppWithAgent(workspace, tab.agentId, tab.appId) !==
+				undefined
+			);
+		}
+
+		return (
+			wildcardHostname.trim() !== "" &&
+			findWorkspaceAgent(workspace, tab.agentId) !== undefined
+		);
+	});
 }
 
 export function areUserRightPanelTabsEqual(
@@ -85,6 +150,9 @@ export function getNextTerminalTabLabel(
 ): string {
 	const usedNumbers = new Set<number>();
 	for (const tab of tabs) {
+		if (tab.kind !== "terminal") {
+			continue;
+		}
 		const match = /^Terminal (\d+)$/.exec(tab.label);
 		if (!match) {
 			continue;

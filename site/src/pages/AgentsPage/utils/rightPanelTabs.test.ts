@@ -1,4 +1,8 @@
-import { MockWorkspace, MockWorkspaceAgent } from "#/testHelpers/entities";
+import {
+	MockWorkspace,
+	MockWorkspaceAgent,
+	MockWorkspaceApp,
+} from "#/testHelpers/entities";
 import {
 	getPersistedRightPanelTabs,
 	rightPanelTabStorageKeyPrefix,
@@ -19,13 +23,30 @@ describe("right-panel tab validation", () => {
 			label: "Terminal 2",
 			reconnectionToken: "11111111-1111-4111-8111-111111111111",
 		},
+		{
+			id: "app-preview",
+			kind: "workspace_app",
+			label: "Preview",
+			agentId: MockWorkspaceAgent.id,
+			appId: MockWorkspaceApp.id,
+		},
+		{
+			id: "port-3000",
+			kind: "port",
+			label: "Port 3000",
+			agentId: MockWorkspaceAgent.id,
+			port: 3000,
+			protocol: "http",
+			source: "listening",
+		},
 	];
 
-	it("keeps terminal tabs while the workspace agent exists", () => {
+	it("keeps tabs that still match the workspace and wildcard host", () => {
 		expect(
 			validateUserRightPanelTabs(tabs, {
 				workspace: MockWorkspace,
 				workspaceAgent: MockWorkspaceAgent,
+				wildcardHostname: "*.apps.example.com",
 			}),
 		).toEqual(tabs);
 	});
@@ -34,9 +55,41 @@ describe("right-panel tab validation", () => {
 		const validated = validateUserRightPanelTabs(tabs, {
 			workspace: MockWorkspace,
 			workspaceAgent: undefined,
+			wildcardHostname: "*.apps.example.com",
 		});
 
 		expect(validated.some((tab) => tab.kind === "terminal")).toBe(false);
+	});
+
+	it("drops port tabs when wildcard access is unavailable", () => {
+		const validated = validateUserRightPanelTabs(tabs, {
+			workspace: MockWorkspace,
+			workspaceAgent: MockWorkspaceAgent,
+			wildcardHostname: "",
+		});
+
+		expect(validated.some((tab) => tab.kind === "port")).toBe(false);
+	});
+
+	it("drops app tabs when the app no longer exists", () => {
+		const validated = validateUserRightPanelTabs(
+			[
+				{
+					id: "missing-app",
+					kind: "workspace_app",
+					label: "Missing",
+					agentId: MockWorkspaceAgent.id,
+					appId: "missing-app",
+				},
+			],
+			{
+				workspace: MockWorkspace,
+				workspaceAgent: MockWorkspaceAgent,
+				wildcardHostname: "*.apps.example.com",
+			},
+		);
+
+		expect(validated).toEqual([]);
 	});
 });
 
@@ -97,7 +150,7 @@ describe("right-panel tab storage", () => {
 				label: "Claude Code",
 				reconnectionToken: "11111111-1111-4111-8111-111111111111",
 				initialCommand: "claude",
-				sourceAppId: "claude-app",
+				sourceAppId: MockWorkspaceApp.id,
 			},
 		];
 
@@ -109,7 +162,7 @@ describe("right-panel tab storage", () => {
 	it("ignores invalid stored values", () => {
 		localStorage.setItem(
 			`${rightPanelTabStorageKeyPrefix}chat-1`,
-			JSON.stringify([{ id: "bad-tab", kind: "terminal" }]),
+			JSON.stringify([{ id: "bad-tab", kind: "port" }]),
 		);
 
 		expect(getPersistedRightPanelTabs("chat-1")).toEqual([]);
