@@ -42,6 +42,8 @@ type WorkspaceTerminalProps = {
 	containerUser?: string;
 	onStatusChange?: (status: ConnectionStatus) => void;
 	onError?: (error: Error) => void;
+	/** Fires the first time output is parsed and rendered into the terminal. */
+	onContentReady?: () => void;
 	reconnectionToken: string;
 	baseUrl?: string;
 	terminalFontFamily?: string;
@@ -72,6 +74,7 @@ export const WorkspaceTerminal = ({
 	containerUser,
 	onStatusChange,
 	onError,
+	onContentReady,
 	reconnectionToken,
 	baseUrl,
 	terminalFontFamily = DEFAULT_TERMINAL_FONT_FAMILY,
@@ -91,6 +94,9 @@ export const WorkspaceTerminal = ({
 	});
 	const handleStatusChange = useEffectEvent((status: ConnectionStatus) => {
 		onStatusChange?.(status);
+	});
+	const handleContentReady = useEffectEvent(() => {
+		onContentReady?.();
 	});
 	const [terminal, setTerminal] = useState<Terminal>();
 	const { copyToClipboard } = useClipboard();
@@ -127,6 +133,23 @@ export const WorkspaceTerminal = ({
 	const refit = useCallback(() => {
 		const fitAddon = fitAddonRef.current;
 		if (!fitAddon) {
+			return;
+		}
+
+		// Skip fitting while the terminal has no layout box, such as when its
+		// tab is hidden with `display: none`. FitAddon sizes the terminal from
+		// getComputedStyle(mountNode), which reports a percentage width like
+		// "100%" for a display:none element. parseInt turns that into a tiny
+		// pixel value, so fit() would clamp the terminal (and the PTY) to its
+		// minimum column count. Switching back to the tab would then briefly
+		// show the prompt wrapped narrow until the next fit restored the real
+		// size, and the narrow PTY resize reflows server-side scrollback.
+		const mountNode = terminalWrapperRef.current;
+		if (
+			!mountNode ||
+			mountNode.clientWidth === 0 ||
+			mountNode.clientHeight === 0
+		) {
 			return;
 		}
 
@@ -294,6 +317,36 @@ export const WorkspaceTerminal = ({
 			cancelAnimationFrame(frame);
 		};
 	}, [terminal, isVisible, autoFocus, loading]);
+
+	// Notify once the first output has actually been painted. Consumers use
+	// this to show a freshly mounted terminal only after the prompt is on
+	// screen, avoiding a flash of the empty terminal during connection latency.
+	useEffect(() => {
+		if (!terminal) {
+			return;
+		}
+		let hasParsedOutput = false;
+		const writeParsed = terminal.onWriteParsed(() => {
+			hasParsedOutput = true;
+		});
+		// onWriteParsed signals that output was parsed into the buffer, but
+		// xterm only draws it on the following render. Waiting for the first
+		// onRender after a parse ensures the pixels are present before the
+		// terminal is revealed. clear()/refresh fire onRender without a parse
+		// and are intentionally ignored.
+		const rendered = terminal.onRender(() => {
+			if (!hasParsedOutput) {
+				return;
+			}
+			writeParsed.dispose();
+			rendered.dispose();
+			handleContentReady();
+		});
+		return () => {
+			writeParsed.dispose();
+			rendered.dispose();
+		};
+	}, [terminal]);
 
 	useEffect(() => {
 		if (!terminal || !hasBeenVisible) {

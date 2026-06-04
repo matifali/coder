@@ -1,5 +1,20 @@
 import type { Meta, StoryObj } from "@storybook/react-vite";
+import {
+	ChevronDownIcon,
+	LayoutGridIcon,
+	NetworkIcon,
+	PlusIcon,
+	SquareTerminalIcon,
+} from "lucide-react";
+import { useState } from "react";
 import { fn } from "storybook/test";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuSeparator,
+	DropdownMenuTrigger,
+} from "#/components/DropdownMenu/DropdownMenu";
 import type { SidebarTab } from "./SidebarTabView";
 import { SidebarTabView } from "./SidebarTabView";
 
@@ -109,3 +124,93 @@ export const NarrowPanel: Story = {
 		),
 	],
 };
+
+export const CloseableTabs: Story = {
+	render: function CloseableTabs() {
+		const [activeTabId, setActiveTabId] = useState("git");
+		const [tabs, setTabs] = useState<SidebarTab[]>([
+			gitTab,
+			{
+				id: "terminal",
+				label: "Terminal",
+				content: makePanelContent("Terminal"),
+			},
+			{ id: "debug", label: "Debug", content: makePanelContent("Debug") },
+			...Array.from({ length: 8 }, (_, index) => ({
+				id: `terminal-${index + 2}`,
+				label: `Terminal ${index + 2}`,
+				content: makePanelContent(`Terminal ${index + 2}`),
+				closeable: true,
+			})),
+		]);
+
+		return (
+			<SidebarTabView
+				tabs={tabs.map((tab) => ({
+					...tab,
+					onClose: tab.closeable
+						? () => {
+								setTabs((currentTabs) =>
+									currentTabs.filter((currentTab) => currentTab.id !== tab.id),
+								);
+								if (activeTabId === tab.id) {
+									setActiveTabId("git");
+								}
+							}
+						: undefined,
+				}))}
+				effectiveTabId={activeTabId}
+				onActiveTabChange={setActiveTabId}
+				isExpanded={false}
+				onToggleExpanded={() => {}}
+				addTabControl={<MockAddTabControl />}
+			/>
+		);
+	},
+};
+
+function MockAddTabControl() {
+	return (
+		<div className="flex h-6 shrink-0 items-center overflow-hidden rounded-md border border-solid border-border-default bg-surface-primary text-content-secondary">
+			<button
+				type="button"
+				aria-label="New terminal tab"
+				title="New terminal tab"
+				className="flex h-full cursor-pointer items-center justify-center border-0 border-r border-solid border-border-default bg-transparent px-1.5 hover:bg-surface-secondary hover:text-content-primary"
+			>
+				<PlusIcon className="size-3.5" />
+			</button>
+			<DropdownMenu>
+				<DropdownMenuTrigger asChild>
+					<button
+						type="button"
+						aria-label="Add panel"
+						className="flex h-full cursor-pointer items-center justify-center border-0 bg-transparent px-1 hover:bg-surface-secondary hover:text-content-primary"
+					>
+						<ChevronDownIcon className="size-3" />
+					</button>
+				</DropdownMenuTrigger>
+				<DropdownMenuContent
+					align="end"
+					side="bottom"
+					className="w-52 p-1 [&_[role=menuitem]]:py-1 [&_[role=menuitem]]:text-xs [&_svg]:!size-3.5"
+				>
+					<DropdownMenuItem>
+						<SquareTerminalIcon />
+						New Terminal
+					</DropdownMenuItem>
+					<DropdownMenuSeparator className="my-1" />
+					<DropdownMenuItem>
+						<LayoutGridIcon />
+						Preview app
+					</DropdownMenuItem>
+					<DropdownMenuSeparator className="my-1" />
+					<DropdownMenuItem>
+						<NetworkIcon />
+						Ports (1)
+					</DropdownMenuItem>
+				</DropdownMenuContent>
+			</DropdownMenu>
+		</div>
+	);
+}
