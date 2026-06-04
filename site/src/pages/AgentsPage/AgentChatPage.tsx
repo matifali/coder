@@ -1601,6 +1601,7 @@ const AgentChatPage: FC = () => {
 
 	return (
 		<AgentChatPageView
+			key={agentId}
 			agentId={agentId}
 			sendShortcut={getAgentChatSendShortcut(
 				preferencesQuery.data?.agent_chat_send_shortcut,
