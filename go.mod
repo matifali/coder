@@ -94,8 +94,12 @@ replace github.com/spf13/afero => github.com/aslilac/afero v0.0.0-20250403163713
 //     emit a Base64 PDF document block for application/pdf FileParts on the
 //     Anthropic provider so user-uploaded PDFs actually reach Claude/Bedrock
 //     instead of being silently dropped.
-// See: https://github.com/coder/fantasy/commits/7d46e640327a
-replace charm.land/fantasy => github.com/coder/fantasy v0.0.0-20260602023814-7d46e640327a
+// 11) coder/fantasy#38 @b2b2fc6d524c, forward PDF and text filenames as
+//     a sanitized Anthropic document title so Claude can refer to
+//     attachments by name, and warn on unsupported FilePart media types
+//     instead of silently dropping them.
+// See: https://github.com/coder/fantasy/commits/b2b2fc6d524c
+replace charm.land/fantasy => github.com/coder/fantasy v0.0.0-20260604065934-b2b2fc6d524c
 
 // coder/coder uses a fork of charmbracelet's fork of the Anthropic Go SDK
 // with performance improvements and Bedrock header cleanup.
