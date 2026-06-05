@@ -165,3 +165,146 @@ func Test_buildAppLinkURL(t *testing.T) {
 		})
 	}
 }
+
+func Test_resolveExternalAppURL(t *testing.T) {
+	t.Parallel()
+
+	deployment, err := url.Parse("https://coder.example.com")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name           string
+		deploymentURL  *url.URL
+		rawAppURL      string
+		wantSanitized  string
+		wantSubstitute bool
+		wantErr        bool
+		wantErrSubstr  string
+	}{
+		{
+			name:           "allowed scheme without placeholder",
+			deploymentURL:  deployment,
+			rawAppURL:      "vscode://coder.coder-remote/open?owner=alice",
+			wantSanitized:  "vscode://coder.coder-remote/open?owner=alice",
+			wantSubstitute: true,
+		},
+		{
+			name:           "allowed scheme with placeholder",
+			deploymentURL:  deployment,
+			rawAppURL:      "cursor://coder.coder-remote/open?token=$SESSION_TOKEN",
+			wantSanitized:  "cursor://coder.coder-remote/open?token=$SESSION_TOKEN",
+			wantSubstitute: true,
+		},
+		{
+			name:           "allowed scheme mixed case",
+			deploymentURL:  deployment,
+			rawAppURL:      "VSCode://coder.coder-remote/open",
+			wantSanitized:  "VSCode://coder.coder-remote/open",
+			wantSubstitute: true,
+		},
+		{
+			name:           "zed scheme is allowed",
+			deploymentURL:  deployment,
+			rawAppURL:      "zed://ssh/coder.workspace",
+			wantSanitized:  "zed://ssh/coder.workspace",
+			wantSubstitute: true,
+		},
+		{
+			name:           "https same host with placeholder substitutes",
+			deploymentURL:  deployment,
+			rawAppURL:      "https://coder.example.com/dashboard?t=$SESSION_TOKEN",
+			wantSanitized:  "https://coder.example.com/dashboard?t=$SESSION_TOKEN",
+			wantSubstitute: true,
+		},
+		{
+			name:           "https same host without placeholder substitutes",
+			deploymentURL:  deployment,
+			rawAppURL:      "https://coder.example.com/dashboard",
+			wantSanitized:  "https://coder.example.com/dashboard",
+			wantSubstitute: true,
+		},
+		{
+			name:           "https same host mixed case",
+			deploymentURL:  deployment,
+			rawAppURL:      "https://Coder.Example.COM/dashboard",
+			wantSanitized:  "https://Coder.Example.COM/dashboard",
+			wantSubstitute: true,
+		},
+		{
+			name:           "https external host without placeholder opens",
+			deploymentURL:  deployment,
+			rawAppURL:      "https://docs.example.org/welcome",
+			wantSanitized:  "https://docs.example.org/welcome",
+			wantSubstitute: false,
+		},
+		{
+			name:          "https external host with placeholder refused",
+			deploymentURL: deployment,
+			rawAppURL:     "https://attacker.example/?t=$SESSION_TOKEN",
+			wantErr:       true,
+			wantErrSubstr: "leak the session token",
+		},
+		{
+			name:          "http external host with placeholder refused",
+			deploymentURL: deployment,
+			rawAppURL:     "http://attacker.example/?t=$SESSION_TOKEN",
+			wantErr:       true,
+			wantErrSubstr: "leak the session token",
+		},
+		{
+			name:          "file scheme refused",
+			deploymentURL: deployment,
+			rawAppURL:     "file:///etc/passwd",
+			wantErr:       true,
+			wantErrSubstr: "not in the allowed protocol list",
+		},
+		{
+			name:          "mailto scheme refused",
+			deploymentURL: deployment,
+			rawAppURL:     "mailto:victim@example.com",
+			wantErr:       true,
+			wantErrSubstr: "not in the allowed protocol list",
+		},
+		{
+			name:          "unknown custom scheme refused",
+			deploymentURL: deployment,
+			rawAppURL:     "slack://attacker",
+			wantErr:       true,
+			wantErrSubstr: "not in the allowed protocol list",
+		},
+		{
+			name:          "unparseable URL refused",
+			deploymentURL: deployment,
+			rawAppURL:     "http://[::1",
+			wantErr:       true,
+			wantErrSubstr: "parse external app URL",
+		},
+		{
+			name:          "nil deployment URL falls through to external check",
+			deploymentURL: nil,
+			rawAppURL:     "https://anywhere.example/?t=$SESSION_TOKEN",
+			wantErr:       true,
+			wantErrSubstr: "leak the session token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			sanitized, substitute, err := resolveExternalAppURL(tt.deploymentURL, tt.rawAppURL)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.wantErrSubstr != "" {
+					assert.Contains(t, err.Error(), tt.wantErrSubstr)
+				}
+				assert.Empty(t, sanitized)
+				assert.False(t, substitute)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSanitized, sanitized)
+			assert.Equal(t, tt.wantSubstitute, substitute)
+		})
+	}
+}

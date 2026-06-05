@@ -703,14 +703,14 @@ func TestOpenApp(t *testing.T) {
 		w.RequireContains("region not found")
 	})
 
-	t.Run("ExternalAppSessionToken", func(t *testing.T) {
+	t.Run("ExternalAppAllowedSchemeSubstitutes", func(t *testing.T) {
 		t.Parallel()
 
 		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
 			agents[0].Apps = []*proto.App{
 				{
 					Slug:     "app1",
-					Url:      "https://example.com/app1?token=$SESSION_TOKEN",
+					Url:      "vscode://coder.coder-remote/open?token=$SESSION_TOKEN",
 					External: true,
 				},
 			}
@@ -723,5 +723,149 @@ func TestOpenApp(t *testing.T) {
 		w.RequireError()
 		w.RequireContains("test.open-error")
 		w.RequireContains(client.SessionToken())
+	})
+
+	t.Run("ExternalAppZedSchemeAllowed", func(t *testing.T) {
+		t.Parallel()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "zed",
+					Url:      "zed://ssh/coder.workspace",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "zed", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("test.open-error")
+		w.RequireContains("zed://ssh/coder.workspace")
+	})
+
+	t.Run("ExternalAppCrossDeploymentURLRefused", func(t *testing.T) {
+		t.Parallel()
+
+		// Set up a deployment first so we know the URL, then register a
+		// workspace on a *second* deployment whose external app URL points
+		// at the first deployment with a $SESSION_TOKEN placeholder. From
+		// the second deployment's CLI client perspective, the first
+		// deployment is an external host, so the CLI must refuse. The same
+		// deployment + same host substitution branch is covered by the
+		// unit test in open_internal_test.go.
+		initial, _, _ := setupWorkspaceForAgent(t)
+		deploymentURL := initial.URL.String()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "app1",
+					Url:      deploymentURL + "/path?token=$SESSION_TOKEN",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "app1", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("leak the session token")
+		w.RequireNotContains(client.SessionToken())
+	})
+
+	t.Run("ExternalAppExternalHostNoTokenOpens", func(t *testing.T) {
+		t.Parallel()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "app1",
+					Url:      "https://docs.example.org/welcome",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "app1", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("test.open-error")
+		w.RequireContains("https://docs.example.org/welcome")
+		w.RequireNotContains(client.SessionToken())
+	})
+
+	t.Run("ExternalAppExternalHostWithTokenRefused", func(t *testing.T) {
+		t.Parallel()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "app1",
+					Url:      "https://attacker.example/?t=$SESSION_TOKEN",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "app1", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("leak the session token")
+		w.RequireNotContains(client.SessionToken())
+		w.RequireNotContains("test.open-error")
+	})
+
+	t.Run("ExternalAppDisallowedSchemeRefused", func(t *testing.T) {
+		t.Parallel()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "app1",
+					Url:      "file:///etc/passwd",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "app1", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("not in the allowed protocol list")
+		w.RequireNotContains("test.open-error")
+	})
+
+	t.Run("ExternalAppCustomSchemeRefused", func(t *testing.T) {
+		t.Parallel()
+
+		client, ws, _ := setupWorkspaceForAgent(t, func(agents []*proto.Agent) []*proto.Agent {
+			agents[0].Apps = []*proto.App{
+				{
+					Slug:     "app1",
+					Url:      "slack://attacker",
+					External: true,
+				},
+			}
+			return agents
+		})
+		inv, root := clitest.New(t, "open", "app", ws.Name, "app1", "--test.open-error")
+		clitest.SetupConfig(t, client, root)
+
+		w := clitest.StartWithWaiter(t, inv)
+		w.RequireError()
+		w.RequireContains("not in the allowed protocol list")
+		w.RequireNotContains("test.open-error")
 	})
 }
