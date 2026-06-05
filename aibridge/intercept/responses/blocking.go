@@ -14,7 +14,6 @@ import (
 	"golang.org/x/xerrors"
 
 	"cdr.dev/slog/v3"
-	"github.com/coder/coder/v2/aibridge/config"
 	aibcontext "github.com/coder/coder/v2/aibridge/context"
 	"github.com/coder/coder/v2/aibridge/intercept"
 	"github.com/coder/coder/v2/aibridge/keypool"
@@ -30,23 +29,19 @@ type BlockingResponsesInterceptor struct {
 func NewBlockingInterceptor(
 	id uuid.UUID,
 	reqPayload RequestPayload,
-	providerName string,
-	cfg config.OpenAI,
+	cfg intercept.Config,
+	cred intercept.Credential,
 	clientHeaders http.Header,
-	authHeaderName string,
 	tracer trace.Tracer,
-	cred intercept.CredentialInfo,
 ) *BlockingResponsesInterceptor {
 	return &BlockingResponsesInterceptor{
 		responsesInterceptionBase: responsesInterceptionBase{
-			id:             id,
-			providerName:   providerName,
-			reqPayload:     reqPayload,
-			cfg:            cfg,
-			clientHeaders:  clientHeaders,
-			authHeaderName: authHeaderName,
-			tracer:         tracer,
-			credential:     cred,
+			id:            id,
+			reqPayload:    reqPayload,
+			cfg:           cfg,
+			cred:          cred,
+			clientHeaders: clientHeaders,
+			tracer:        tracer,
 		},
 	}
 }
@@ -89,7 +84,11 @@ func (i *BlockingResponsesInterceptor) ProcessRequest(w http.ResponseWriter, r *
 	// Sum the key attempts across all iterations and record once when the
 	// interception completes.
 	var totalKeyAttempts int
-	defer func() { i.cfg.KeyPool.RecordAttempts(totalKeyAttempts) }()
+	defer func() {
+		if centralized, ok := intercept.AsCentralized(i.cred); ok {
+			centralized.Pool.RecordAttempts(totalKeyAttempts)
+		}
+	}()
 
 	for shouldLoop {
 		srv := i.newResponsesService()
@@ -157,12 +156,15 @@ func (i *BlockingResponsesInterceptor) ProcessRequest(w http.ResponseWriter, r *
 // returning the upstream response, the number of key attempts made for this
 // call, and any error.
 func (i *BlockingResponsesInterceptor) newResponse(ctx context.Context, srv responses.ResponseService, opts []option.RequestOption) (*responses.Response, int, error) {
-	// BYOK: single attempt, no failover.
-	if i.cfg.KeyPool == nil {
+	switch i.cred.Kind() {
+	case intercept.CredentialKindCentralized:
+		return i.newResponseWithKeyFailover(ctx, srv, opts)
+	case intercept.CredentialKindBYOK:
 		response, err := i.newResponseWithKey(ctx, srv, opts)
 		return response, 0, err
+	default:
+		return nil, 0, xerrors.New("no credential configured")
 	}
-	return i.newResponseWithKeyFailover(ctx, srv, opts)
 }
 
 // newResponseWithKey performs a single upstream call.
@@ -180,16 +182,21 @@ func (i *BlockingResponsesInterceptor) newResponseWithKey(ctx context.Context, s
 // failover and are returned to the caller. It returns the upstream response,
 // the number of key attempts made for this call, and any error.
 func (i *BlockingResponsesInterceptor) newResponseWithKeyFailover(ctx context.Context, srv responses.ResponseService, opts []option.RequestOption) (*responses.Response, int, error) {
-	walker := i.cfg.KeyPool.Walker()
+	centralized, ok := intercept.AsCentralized(i.cred)
+	if !ok {
+		// Centralized but pool-less (no centralized keys configured): one attempt.
+		response, err := i.newResponseWithKey(ctx, srv, opts)
+		return response, 0, err
+	}
+	walker := centralized.Pool.Walker()
 	for {
 		key, keyPoolErr := walker.Next()
 		if keyPoolErr != nil {
 			return nil, walker.Attempts(), keyPoolErr
 		}
-		// Record the key in use so the hint reflects the last attempted key.
-		i.credential = intercept.NewCredentialInfo(intercept.CredentialKindCentralized, key.Value())
+		centralized.SetKey(key.Value())
 		i.logger.Debug(ctx, "using centralized api key",
-			slog.F("credential_hint", i.Credential().Hint), slog.F("credential_length", i.Credential().Length))
+			slog.F("credential_hint", i.cred.Hint()), slog.F("credential_length", i.cred.Length()))
 
 		requestOpts := append([]option.RequestOption{}, opts...)
 		requestOpts = append(requestOpts,

@@ -12,32 +12,17 @@ const (
 	ProviderCopilot   = "copilot"
 )
 
-// Anthropic carries configuration for an Anthropic provider.
-//
-// Authentication is mutually exclusive across these three fields,
-// set per interception in the provider's CreateInterceptor:
-//   - KeyPool: centralized requests with automatic key failover.
-//   - Key: BYOK with X-Api-Key (single attempt, no failover).
-//   - BYOKBearerToken: BYOK with Authorization Bearer (single
-//     attempt, no failover).
-//
-// TODO(ssncferreira): consolidate the three authentication
-// fields into a single abstraction per
-// https://github.com/coder/aibridge/issues/266.
+// Anthropic carries configuration for an Anthropic provider. KeyPool holds the
+// centralized keys (with failover); BYOK credentials are resolved per request
+// from the incoming headers, not configured here.
 type Anthropic struct {
 	// Name is the provider instance name. If empty, defaults to "anthropic".
 	Name             string
 	BaseURL          string
-	Key              string
 	KeyPool          *keypool.Pool
 	APIDumpDir       string
 	CircuitBreaker   *CircuitBreaker
 	SendActorHeaders bool
-	ExtraHeaders     map[string]string
-	// BYOKBearerToken is set in BYOK mode when the user authenticates
-	// with a access token. When set, the access token is used for upstream
-	// LLM requests instead of the API key.
-	BYOKBearerToken string
 }
 
 type AWSBedrock struct {
@@ -50,26 +35,17 @@ type AWSBedrock struct {
 	BaseURL string
 }
 
-// OpenAI carries configuration for an OpenAI provider.
-//
-// Authentication is mutually exclusive across these two fields,
-// set per interception in the provider's CreateInterceptor:
-//   - KeyPool: centralized requests with automatic key failover.
-//   - Key: BYOK with Authorization Bearer (single attempt, no
-//     failover).
-//
-// TODO(ssncferreira): consolidate the authentication fields per
-// https://github.com/coder/aibridge/issues/266.
+// OpenAI carries configuration for an OpenAI provider. KeyPool holds the
+// centralized keys (with failover); BYOK credentials are resolved per request
+// from the incoming headers, not configured here.
 type OpenAI struct {
 	// Name is the provider instance name. If empty, defaults to "openai".
 	Name             string
 	BaseURL          string
-	Key              string
 	KeyPool          *keypool.Pool
 	APIDumpDir       string
 	CircuitBreaker   *CircuitBreaker
 	SendActorHeaders bool
-	ExtraHeaders     map[string]string
 }
 
 type Copilot struct {
