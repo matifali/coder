@@ -8208,7 +8208,7 @@ export interface TemplateBuilderModuleVariable {
 	readonly default?: string;
 	readonly required: boolean;
 	readonly sensitive: boolean;
-	readonly builder_managed: boolean;
+	readonly computed: boolean;
 }
 
 // From codersdk/templatebuilder.go
