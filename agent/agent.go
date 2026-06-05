@@ -427,7 +427,7 @@ func (a *agent) init() {
 
 	pathStore := agentgit.NewPathStore()
 	a.filesAPI = agentfiles.NewAPI(a.logger.Named("files"), a.filesystem, pathStore)
-	a.processAPI = agentproc.NewAPI(a.logger.Named("processes"), a.execer, pathStore, a.envInfo, a.updateCommandEnv, func() string {
+	a.processAPI = agentproc.NewAPI(a.logger.Named("processes"), a.execer, a.filesystem, pathStore, a.envInfo, a.updateCommandEnv, func() string {
 		if m := a.manifest.Load(); m != nil {
 			return m.Directory
 		}

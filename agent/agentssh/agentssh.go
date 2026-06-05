@@ -32,6 +32,7 @@ import (
 	"github.com/coder/coder/v2/agent/agentexec"
 	"github.com/coder/coder/v2/agent/agentrsa"
 	"github.com/coder/coder/v2/agent/usershell"
+	"github.com/coder/coder/v2/agent/workingdir"
 	"github.com/coder/coder/v2/codersdk"
 	"github.com/coder/coder/v2/pty"
 )
@@ -878,13 +879,14 @@ func (s *Server) sftpHandler(logger slog.Logger, session ssh.Session) error {
 	// Change current working directory to the configured
 	// directory (or home directory if not set) so that SFTP
 	// connections land there.
-	dir := s.config.WorkingDirectory()
-	if dir == "" {
-		var err error
-		dir, err = userHomeDir()
-		if err != nil {
-			logger.Warn(ctx, "get sftp working directory failed, unable to get home dir", slog.Error(err))
-		}
+	//
+	// The host EnvInfo is used here, not a container's. This is
+	// correct only while SFTP is blocked for container sessions
+	// (see the closeCause guard above). If container SFTP is added,
+	// the container EnvInfo must be resolved and passed here.
+	dir, err := s.resolveWorkingDir(s.config.EnvInfo)
+	if err != nil {
+		logger.Warn(ctx, "resolve sftp working directory failed", slog.Error(err))
 	}
 	if dir != "" {
 		opts = append(opts, sftp.WithServerWorkingDirectory(dir))
@@ -916,6 +918,12 @@ func (s *Server) sftpHandler(logger slog.Logger, session ssh.Session) error {
 	return xerrors.Errorf("sftp server closed with error: %w", err)
 }
 
+// resolveWorkingDir returns the working directory for a session, binding
+// the server filesystem and configured directory to the shared resolver.
+func (s *Server) resolveWorkingDir(ei usershell.EnvInfoer) (string, error) {
+	return workingdir.Resolve(s.fs, ei, s.config.WorkingDirectory())
+}
+
 func (s *Server) CommandEnv(ei usershell.EnvInfoer, addEnv []string) (shell, dir string, env []string, err error) {
 	if ei == nil {
 		ei = &usershell.SystemEnvInfo{}
@@ -932,18 +940,9 @@ func (s *Server) CommandEnv(ei usershell.EnvInfoer, addEnv []string) (shell, dir
 		return "", "", nil, xerrors.Errorf("get user shell: %w", err)
 	}
 
-	dir = s.config.WorkingDirectory()
-
-	// If the metadata directory doesn't exist, we run the command
-	// in the users home directory.
-	_, err = os.Stat(dir)
-	if dir == "" || err != nil {
-		// Default to user home if a directory is not set.
-		homedir, err := ei.HomeDir()
-		if err != nil {
-			return "", "", nil, xerrors.Errorf("get home dir: %w", err)
-		}
-		dir = homedir
+	dir, err = s.resolveWorkingDir(ei)
+	if err != nil {
+		return "", "", nil, xerrors.Errorf("resolve working dir: %w", err)
 	}
 	env = append(ei.Environ(), addEnv...)
 	// Set login variables (see `man login`).
