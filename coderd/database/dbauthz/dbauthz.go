@@ -1615,6 +1615,34 @@ func scopedOrgRoleIdentifiers(names []string, orgID uuid.UUID) []rbac.RoleIdenti
 	return out
 }
 
+func sharedOnlyChatSubjectRoles(subject rbac.Subject) rbac.Roles {
+	roleNames := subject.SafeRoleNames()
+	sharedRoles := make(rbac.Roles, 0, len(roleNames))
+	seenOrgs := make(map[uuid.UUID]struct{}, len(roleNames))
+
+	for _, role := range roleNames {
+		if role.OrganizationID == uuid.Nil {
+			continue
+		}
+		if _, ok := seenOrgs[role.OrganizationID]; ok {
+			continue
+		}
+		seenOrgs[role.OrganizationID] = struct{}{}
+
+		sharedRoles = append(sharedRoles, rbac.Role{
+			Identifier: rbac.RoleIdentifier{
+				Name:           rbac.RoleOrgMember(),
+				OrganizationID: role.OrganizationID,
+			},
+			ByOrgID: map[string]rbac.OrgPermissions{
+				role.OrganizationID.String(): {},
+			},
+		})
+	}
+
+	return sharedRoles
+}
+
 func (q *querier) AcquireChats(ctx context.Context, arg database.AcquireChatsParams) ([]database.Chat, error) {
 	// AcquireChats is a system-level operation used by the chat processor.
 	// Authorization is done at the system level, not per-user.
@@ -3323,7 +3351,19 @@ func (q *querier) GetChatWorkspaceTTL(ctx context.Context) (string, error) {
 }
 
 func (q *querier) GetChats(ctx context.Context, arg database.GetChatsParams) ([]database.GetChatsRow, error) {
-	prep, err := prepareSQLFilter(ctx, q.auth, policy.ActionRead, rbac.ResourceChat.Type)
+	act, ok := ActorFromContext(ctx)
+	if !ok {
+		return nil, ErrNoActor
+	}
+
+	if arg.SharedOnly {
+		// SharedOnly should exclude chats visible through RBAC role grants.
+		// We keep only org membership facts so group and Everyone ACLs still
+		// match, without letting owner or admin roles pull in unrelated chats.
+		act = act.WithRoles(sharedOnlyChatSubjectRoles(act))
+	}
+
+	prep, err := q.auth.Prepare(ctx, act, policy.ActionRead, rbac.ResourceChat.Type)
 	if err != nil {
 		return nil, xerrors.Errorf("(dev error) prepare sql filter: %w", err)
 	}

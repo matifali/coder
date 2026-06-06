@@ -1414,6 +1414,13 @@ func TestGetAuthorizedChats(t *testing.T) {
 		require.NoError(t, err)
 		require.GreaterOrEqual(t, len(ownerRows), 5)
 
+		ownerSharedRows, err := authzdb.GetChats(ownerCtx, database.GetChatsParams{
+			SharedOnly: true,
+			ViewerID:   owner.ID,
+		})
+		require.NoError(t, err)
+		require.Empty(t, ownerSharedRows, "shared-only must not include chats visible through owner RBAC")
+
 		// As secondMember: should see 0 chats.
 		secondSubject, _, err := httpmw.UserRBACSubject(ctx, authzdb, secondMember.ID, rbac.ExpandableScope(rbac.ScopeAll))
 		require.NoError(t, err)
@@ -1584,6 +1591,13 @@ func TestGetAuthorizedChatsACLSharing(t *testing.T) {
 	require.NoError(t, err)
 	require.ElementsMatch(t, []uuid.UUID{ownerChat.ID, recipientChat.ID}, chatIDs(authzRows))
 
+	authzSharedOnly, err := authzdb.GetChats(recipientCtx, database.GetChatsParams{
+		SharedOnly: true,
+		ViewerID:   recipient.ID,
+	})
+	require.NoError(t, err)
+	require.ElementsMatch(t, []uuid.UUID{ownerChat.ID}, chatIDs(authzSharedOnly))
+
 	rbac.SetChatACLDisabled(true)
 	disabledRows, err := db.GetAuthorizedChats(ctx, database.GetChatsParams{}, preparedRecipient)
 	require.NoError(t, err)
@@ -1681,6 +1695,16 @@ func TestGetAuthorizedChatsACLSharingGroupACL(t *testing.T) {
 	require.Equal(t, ownerChat.ID, sharedOnly[0].Chat.ID)
 	require.Empty(t, sharedOnly[0].Chat.UserACL)
 	require.Equal(t, sharedGroupACL, sharedOnly[0].Chat.GroupACL)
+
+	authzdb := dbauthz.New(db, authorizer, slogtest.Make(t, &slogtest.Options{}), coderdtest.AccessControlStorePointer())
+	recipientCtx := dbauthz.As(ctx, recipientSubject)
+	authzSharedOnly, err := authzdb.GetChats(recipientCtx, database.GetChatsParams{
+		SharedOnly: true,
+		ViewerID:   recipient.ID,
+	})
+	require.NoError(t, err)
+	require.Len(t, authzSharedOnly, 1)
+	require.Equal(t, ownerChat.ID, authzSharedOnly[0].Chat.ID)
 }
 
 //nolint:tparallel,paralleltest // It toggles the global chat ACL flag.

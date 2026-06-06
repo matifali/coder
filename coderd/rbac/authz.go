@@ -140,6 +140,15 @@ func (s Subject) WithCachedASTValue() Subject {
 	return tmp
 }
 
+// WithRoles rebuilds the cached rego subject after role changes so callers
+// can reuse an existing subject without carrying stale authorization state.
+func (s Subject) WithRoles(roles ExpandableRoles) Subject {
+	tmp := s
+	tmp.Roles = roles
+	tmp.cachedASTValue = nil
+	return tmp.WithCachedASTValue()
+}
+
 func (s Subject) Equal(b Subject) bool {
 	if s.ID != b.ID {
 		return false
